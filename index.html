@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APS PKCE Token Generator</title>
+    <style>
+        /* Some basic styling */
+        body { font-family: sans-serif; padding: 2em; }
+        pre { background-color: #eee; padding: 1em; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <h1>APS PKCE Token Generator</h1>
+    <div id="status"></div>
+    <div id="token-data" style="display: none;">
+        <h2>Access Token:</h2>
+        <pre id="access-token"></pre>
+        <h2>Token Data:</h2>
+        <pre id="token-payload"></pre>
+    </div>
+
+    <script>
+        // Configuration
+        const clientId = 'uvFyyTfacOGoIjGl30dsv6beKEk7R5Ws6WcltNxSwWC3uA0y';
+        const redirectUri = 'https://joaomartins-callmejohn.github.io/aps-pkce-token-ez';
+        const scopes = 'user-profile:read';
+        const apsAuthUrl = 'https://developer.api.autodesk.com/authentication/v2/authorize';
+        const apsTokenUrl = 'https://developer.api.autodesk.com/authentication/v2/token';
+
+        // Helper function to generate a random string for the code verifier
+        function generateRandomString(length) {
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let text = '';
+            for (let i = 0; i < length; i++) {
+                text += possible.charAt(Math.floor(Math.random() * possible.length));
+            }
+            return text;
+        }
+
+        // Helper function to calculate SHA256 hash
+        async function sha256(plain) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(plain);
+            const hash = await window.crypto.subtle.digest('SHA-256', data);
+            return hash;
+        }
+
+        // Helper function to Base64URL encode a string
+        function base64urlencode(a) {
+            return btoa(String.fromCharCode.apply(null, new Uint8Array(a)))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+        }
+        
+        // Main function
+        (async () => {
+            const statusDiv = document.getElementById('status');
+            const tokenDataDiv = document.getElementById('token-data');
+            const accessTokenPre = document.getElementById('access-token');
+            const tokenPayloadPre = document.getElementById('token-payload');
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const authCode = urlParams.get('code');
+
+            if (!authCode) {
+                // Step 1: Start the authorization flow
+                statusDiv.innerText = 'Starting authorization...';
+                
+                const codeVerifier = generateRandomString(128);
+                sessionStorage.setItem('pkce_code_verifier', codeVerifier);
+
+                const hashed = await sha256(codeVerifier);
+                const codeChallenge = base64urlencode(hashed);
+
+                const authUrl = new URL(apsAuthUrl);
+                authUrl.search = new URLSearchParams({
+                    response_type: 'code',
+                    client_id: clientId,
+                    redirect_uri: redirectUri,
+                    scope: scopes,
+                    prompt: 'login',
+                    code_challenge: codeChallenge,
+                    code_challenge_method: 'S256'
+                }).toString();
+                
+                statusDiv.innerText = 'Redirecting to Autodesk login...';
+                window.location.href = authUrl.toString();
+
+            } else {
+                // Step 2: Exchange authorization code for access token
+                statusDiv.innerText = 'Exchanging authorization code for access token...';
+
+                const codeVerifier = sessionStorage.getItem('pkce_code_verifier');
+                if (!codeVerifier) {
+                    statusDiv.innerText = 'Error: Code verifier not found. Please try again.';
+                    return;
+                }
+
+                try {
+                    const response = await fetch(apsTokenUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: new URLSearchParams({
+                            grant_type: 'authorization_code',
+                            code: authCode,
+                            redirect_uri: redirectUri,
+                            client_id: clientId,
+                            code_verifier: codeVerifier
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`Token exchange failed: ${errorData.error_description || response.statusText}`);
+                    }
+
+                    const tokenData = await response.json();
+
+                    statusDiv.style.display = 'none';
+                    tokenDataDiv.style.display = 'block';
+                    accessTokenPre.textContent = tokenData.access_token;
+                    tokenPayloadPre.textContent = JSON.stringify(tokenData, null, 2);
+                    
+                    sessionStorage.removeItem('pkce_code_verifier');
+
+                } catch (error) {
+                    statusDiv.innerHTML = `<h2>Error:</h2><pre>${error.message}</pre>`;
+                }
+            }
+        })();
+
+    </script>
+</body>
+</html> 
